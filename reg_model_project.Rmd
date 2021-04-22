@@ -1,0 +1,1223 @@
+---
+title: "Modeling and prediction for movies"
+output: 
+  html_document: 
+    fig_height: 4
+    highlight: pygments
+    theme: spacelab
+---
+
+## Setup
+
+### Load packages
+
+```{r load-packages, message = FALSE}
+library(ggplot2)
+library(dplyr)
+library(statsr)
+library(GGally)
+```
+
+### Load data
+
+```{r load-data}
+load("movies.Rdata")
+```
+
+
+
+* * *
+
+## Part 1: Data
+
+* The data set "movies" is comprised of 651 **randomly sampled** movies produced and released before 2016. The data set includes information from IMDB and Rotten Tomatotes.
+
+* The data does NOT come from experimental design method and NO random assignment was used; hence, causality is irrelevant here. 
+
+* The data is kind of observation based on random sampling.  We could use the data to examine relationships between variables in the data.
+
+* Since the data is randomly sampled among US movies, the results could be generalized withing the US context.
+
+* * *
+
+## Part 2: Research question
+
+"Which variables are more likely to be associated with the popularity of a movie?"  
+
+For instance, will there be a positive relationship between movie ratings, actor/actress/director and the popularity of a movie?
+
+According to the project instruction, I were a newly hired data scientist at Paramount Pictures.  This is my first job assignment from my boss.  She wants me to identify variables that related to the popularity of a movie.  So I have to find out the answer to her research question.
+
+
+* * *
+
+## Part 3: Exploratory data analysis
+
+### Data Checking
+
+1. Do we need to clean the data e.g. NA? 
+
+```{r}
+summary(movies)
+
+```
+
+Turn out there is no NA in these variabls.
+
+
+2. Does the size of variables small or big?
+
+```{r}
+summary(movies[, c(2,3, 5:6, 15, 17, 19:24)])
+
+```
+Base size of some variables' levels are rather small.  
+
+
+Title_type has 3 levels, however, the majority are Feature Film.  Only 5 are TV Movie.  Also 55 are documentary.  To compare apples with apples, and the small size of TV Movie, we need to filter out these 2 levels and focus on Feature Film.
+
+Best_pic_nom and best_pic_win are another examples. Only 22 nominated and 7 won.
+Also only 15 are top200_box.  We have to be cautious about these variable levels.
+
+
+
+3.  How many films from 1970 to 2014?
+Need to create a new var "yr" and then group the movies by yr. The conjecture is movies in the 70s and 80s might be the classic.  Also people may tend to think old movies are better than new movies.  That's why we try to group movies into different decades and test the conjecture out.
+
+```{r}
+
+movies = movies %>% mutate(yr = ifelse(thtr_rel_year %in% 1970:1979, "1970s",
+ifelse(thtr_rel_year %in% 1980:1989, "1980s",
+ifelse(thtr_rel_year %in% 1990:1999, "1990s",
+ifelse(thtr_rel_year %in% 2000:2009, "2000s",
+"2010s" )))))  
+
+movies %>% group_by(yr) %>% summarize (n())
+table (movies$yr, movies$top200_box)
+
+
+```
+
+```{r another way to grp}
+
+test = movies %>% mutate(nvar = ifelse( (yr %in% c("1970s", "1980s","1990s", "2000s","2010s")) & (top200_box =="yes"), "Is top200", "Not top200"  ) )
+
+table(test$nvar)
+
+```
+
+
+After grouping, we see the largest number of movies are from the 2000s (234 movies).  the second biggest group is from the 1990s.  
+
+The 15 Top 200 box office movies in the data set are relatively evenly distributed in the 1980s, 1990s, and the 2000s eras.
+
+
+
+
+4. Any pattern in the Top 200 box office film?
+Top200 Box office films are really the "popular" movies. If we identify patterns among these popular movies, it might help us to develop a better model.
+
+
+```{r}
+chk = movies %>% select (genre, top200_box) %>% filter(top200_box == "yes") %>% group_by(genre)
+
+table(chk)
+
+```
+Turn out those Top200 box office movies in our data set are likely to be Drama or Action & Adventure. We would like to create new variables based on it.
+
+
+
+### Data Preparation
+
+1. For the size concern and better comparison, we revised the Db with feature film exclusively. 
+
+```{r}
+
+movies = movies %>% filter(title_type == "Feature Film")
+
+```
+
+
+2. Based on the pattern we found in the Top 200 box office film, we created new genre variables because the size concern
+   
+   
+```{r}
+
+movies = movies %>% mutate(DramaOnly = ifelse(genre %in% c("Drama"), 1, 0),
+                   ComedyOnly = ifelse(genre %in% c("Comedy"), 1, 0), 
+                   ActionOnly = ifelse(genre %in% c("Action & Adventure"), 1, 0),
+                   MysteryOnly = ifelse(genre %in% c("Mystery & Suspense"), 1, 0))
+
+table (movies$DramaOnly)
+table (movies$ComedyOnly)
+table (movies$ActionOnly)
+table (movies$MysteryOnly)
+
+```
+  Among the 591 movies, 301 are now under DramaOnly, 85 are ComedyOnly, 65 are ActionOnly, and 59 are MysterOnly.  So a big trunk are drama.
+   
+   
+   
+   
+3. Create high rated score movies from both critics
+Instead of using mean, we use 75% cause: 
+it's the top quantile, also 
+it's the criteria of receiving "certified fresh"  A steady Tomatometer positive score of 75% or higher.
+
+```{r}
+
+imdbq75 =   quantile(movies$imdb_rating, .75)
+
+critics75 =   quantile(movies$critics_score, .75)
+
+movies = movies %>% mutate (hgrated = ifelse((imdb_rating >= 7.3) & (critics_score >=83), 1 , 0))
+
+table(movies$hgrated)
+
+```
+There are 72 movies belonged to hgrated, i.e. rated high in both imdb_rating and critics_score.
+
+
+4. Create a new variable of Star power to see the influence of actor/actress on movie popularity
+
+```{r}
+
+movies = movies %>% mutate(stars = ifelse((best_actor_win == "yes") | (best_actress_win == "yes"), 1, 0)            )
+table(movies$stars)
+
+```
+Among the 591 movies, 141 have either best_actor or best_actress in.
+
+
+
+5. Drama Plus Best Actors/Actresses
+Most top200 are drama.  If a movie is a Drama AND has Best Actors/Actresses, will it be popular? 
+Hence, we create a new var to test it out.
+
+```{r}
+
+movies = movies %>% mutate(bestdrama = ifelse((DramaOnly == 1) & (stars == 1), 1, 0))
+
+table(movies$bestdrama)
+
+```
+90 movies are drama with best actor/actress.  These movies are likely to be BestDrama.
+
+
+### Variable Choice
+
+1.  **Initial selection**
+
+
+**Dependent/Response variable**: "**audience_score**"
+The conjecture is that if audience rated a movie highly positive, 
+the movie is likely to attract people to watch it.
+
+It is not the perfect indicator of popularity. "top200_box" might be a better indicator of the popularity of a movie.
+However, we cannot use it as the response variable.  According to the project rubric, the response variable must be a **numerical** variable. 
+("Develop a multiple linear regression model to predict a numerical variable in the dataset.") 
+Otherwise, "top200_box" will be more appropriate. For the same reason, "audience_rating" is not used.
+
+
+**Initial Explanatory Variables":**
+
+*  Original variables:
+
+     +  runtime, mpaa_rating,  imdb_rating, imdb_num_votes, critic_score, best_pic_nom, best_pic_win, best_actor_win, best_actress_win, best_dir_win, top200_box 
+
+
+*  Newly created variables:  
+
+     +  DramaOnly,  ComedyOnly, ActionOnly, MysteryOnly (these newly created variables replaced genre),   
+     +  yr (replaced thtr_rel_year),   
+     +  hgrated, stars, and bestdrama.
+
+
+In this initial stage, these variables will be included because they might be relevant to explain 
+the popularity of a movie. 
+
+     For instance, when looking at the top_200_box movies, we see most of these popular movies belong to particular genre, e.g. Drama.  Hence, new created genre are included.
+  
+"imdb_num_votes" may not directly related to popularity of a movie, but it might affect the validity of imdb_rating.  The rating from 5 critics will definitely not the same as a rating from 100 critics.
+
+Finally, "imdb_rating", "critic_score" from movie experts and whether a movie wins an Oscar award are likely to increase the popularity of a movie.
+
+Later, some of these variables will be dropped based on the model results.
+
+
+**Variables NOT used**  
+
+The following variables are irrelevant since they will not help us to answer research question:  
+
+
+"title, studio, Month/Day of the Month the movie is released in theatre/DVD 
+with the exception of year released in theatre), imdb_url, rt_url"  
+
+Take "studio" as an example. I'm not sure how many people will check out the studio of a movie before going to see it.   
+  
+There is another group of variables that we won't use.  Not because these variables are irrelevant, but because there are similar variables that will be better fit.  
+
+"critics_rating" and "audience_rating" are relevant categorical variables. 
+However, there are similar numerical variables e.g. "critic_score" and "audience_score".  
+Hence, I will opt for the numerical version than the categorical version.     
+
+Another group of variables that we won't use are:  
+
+"actor1" to "actor5", "director"
+Not because actor/actress/director have nothing to do with the popularity of a movie, 
+but because there are "best_actor_win", "best_actress_win", and "best_dir_win" in the data set, which 
+in my opinion, are more impactful to the popularity of a movie.  
+
+
+Accordingly, a modified movies data set is created.
+
+```{r newmoviesdf}
+
+movies1 = movies %>% select(runtime, mpaa_rating,  imdb_rating, imdb_num_votes, critics_score, audience_score, best_pic_nom, best_pic_win, best_actor_win, best_actress_win, best_dir_win, top200_box, DramaOnly,  ComedyOnly, ActionOnly, MysteryOnly, yr, hgrated, stars, bestdrama)
+
+```
+
+
+2. Data Exploration
+
+###Correlation Matrix###
+We are going to check the correlation of all numerical variables. However, the newly created variables will be seen as numerical var (1,0), but they should not be included.  Hence, we need to 
+exclude these newly created variables. 
+
+```{r correlation matrix}
+
+db4cor = select_if(movies1, is.numeric)
+names(db4cor)
+
+db4cor2 = db4cor[, c(1:5)]
+cormtx = cor(db4cor2)
+round(cormtx, 2)
+
+```
+
+
+Audence_score is highly related to imdb_rating and critics_score, and modestly related to
+imdb_num_votes. The association of runtime and audience_score is relatively weak in comparison with the rest.
+
+One concern is the relatively high relationship between 2 explanatory variables, imdb_rating and critics_score.  It might indicate an issue of collinearity.
+
+
+###Visualization of the relationship between audience_score and the 2 numerical variables###
+
+```{r}
+
+ggpairs(db4cor2)
+
+```
+
+This is a visualization of the relationships among the numerical variables.  From the scatterplots, we see not many linear relationships among these variables.  imdb_rating with audience_score and critics_score with audience_score are the only two.  
+
+In the following, we will "zoom in" to examine these 2 pairs of relationships.
+
+
+
+
+```{r visualrelp1}
+
+ggplot(data = movies1, aes(x=imdb_rating, y=audience_score)) + geom_jitter()+geom_smooth(method = "lm")
+
+```
+
+Most points of imdb_rating, particularly those with 4 or higher imdb_rating, lie closely to the regression line and follow the same direction.
+The higher the imdb_rating, the higher the audience_score.  Definitely a positive relationship.
+
+However, those movies with low imdb_rating (4 or under) don't lie closely to the line.
+
+
+```{r visualrelp2}
+
+ggplot(data = movies1, aes(x=critics_score, y=audience_score)) + geom_jitter()+geom_smooth(method = "lm")
+
+
+```
+
+Here, the points are not as tight as those in imdb_rating.  However, the critics_score are more or less follow the same direction. 
+
+Again, we see a positive relationship between critics_score and audience_score.
+
+
+
+# check out the simple regression models
+
+```{r simplemod1}
+
+simplemod_1= lm(audience_score ~ imdb_rating, data = movies1)
+summary(simplemod_1)
+
+```
+The equation:
+audience_score = -41.3543 + 15.9405(imdb_rating)
+
+The tiny p-value suggests imdb_rating is a significant predictor of audience_score.
+
+R-squared is 0.72, which suggests 72% of the variability in audience_score is explained by imdb_rating.
+
+slope coefficient is 15.9.  For every unit increase, the model predicts an increase of 15.94 of audience_score on average.
+
+
+```{r simplemod2}
+
+simplemod_2= lm(audience_score ~ critics_score, data = movies1)
+summary(simplemod_2)
+
+```
+
+The equation:
+audience_score = 34.04976 + 0.48220(critics_score)
+
+The tiny p-value suggests critics_score is a significant predictor of audience_score.
+
+R-squared is 0.455, which suggests 45% of the variability in audience_score is explained by critics_score.
+
+slope coefficient is 48.2.  With every unit increase, the model predicts an increase of 48.2 of audience_score on average.
+
+
+
+
+* * *
+
+## Part 4: Modeling
+
+### the **initial** full model
+
+```{r fullmodel}
+
+full = lm (audience_score ~ runtime + mpaa_rating + imdb_rating + imdb_num_votes + critics_score + best_pic_nom +  best_pic_win +  best_actor_win + best_actress_win +  best_dir_win +  top200_box +  DramaOnly +  ComedyOnly +  ActionOnly +  MysteryOnly +  yr +  hgrated +  stars +  bestdrama, data = movies1)
+
+summary(full)
+
+```
+This is our initial full model before applying stepwise selection.  It explained 75% of variability of audience_score.  However, since we put all variables in the model, this will not be a good model with maximum adjusted R and least number of variables.
+
+### Search for a parsimonious model
+
+We are going to use the **forward selection that based on adjusted R square** to find the ideal model.
+
+**Why?**
+
+We use adjusted R square because it is a more reliable predictions. We didn't use p-value method
+because it depends on the arbitrary 5% significant level cut off.
+
+We choose forward selection because we have a lot of explanatory variables (19 in total at the  beginning). It will be easier for us to track the change of adjusted R square and don't miss a particular variable in each step.  
+
+**How?**
+
+Forward selection will start with only one variable, and add one variable at a time until the ideal model is reached.
+
+Adjusted R square method:
+1.  Try all possible simple linear regression models predicting y ("audience_score") using one explanatory variable at a time. Since we have 19 variables, we will do it 19 times.  Choose the model with the highest adjusted R square.  In our case, it is "imdb_rating."
+
+2.  Try all possible models adding one more explanatory variable at a time.  In our case, that will be: "imdb_rating" plus one of the remaining 18 variables (e.g. "MysteryOnly") (i.e. imdb_rating + MysteryOnly).  Since we have 18 variables, we will do it 18 times in Step 2.  From the 18 models, we choose the one with the highest adjusted R square. 
+
+3. Repeat the procedure until maximum possible adjusted R square is reached.  In our case, we repeated the procedure 10 times (10 steps) to get the final model with the maximum possible adjusted R square and the least number of variables.
+
+ 
+*Step 1:
+
+```{r step1}
+
+s1_rt = lm(audience_score ~ runtime, data=movies1)
+summary(s1_rt) $ adj.r.squared
+
+
+s1_mr = lm(audience_score ~ mpaa_rating, data=movies1)
+summary(s1_mr) $ adj.r.squared
+
+
+s1_ir = lm(audience_score ~ imdb_rating, data=movies1)
+summary(s1_ir) $ adj.r.squared
+
+
+s1_in = lm(audience_score ~ imdb_num_votes, data=movies1)
+summary(s1_in) $ adj.r.squared
+
+
+s1_cs = lm(audience_score ~ critics_score, data=movies1)
+summary(s1_cs) $ adj.r.squared
+
+
+s1_pn = lm(audience_score ~ best_pic_nom, data=movies1)
+summary(s1_pn) $ adj.r.squared
+
+
+s1_bp = lm(audience_score ~ best_pic_win, data=movies1)
+summary(s1_bp) $ adj.r.squared
+
+
+s1_bam = lm(audience_score ~ best_actor_win, data=movies1)
+summary(s1_bam) $ adj.r.squared
+
+
+s1_baf = lm(audience_score ~ best_actress_win, data=movies1)
+summary(s1_baf) $ adj.r.squared
+
+
+s1_bd = lm(audience_score ~ best_dir_win, data=movies1)
+summary(s1_bd) $ adj.r.squared
+
+
+s1_top = lm(audience_score ~ top200_box, data=movies1)
+summary(s1_top) $ adj.r.squared
+
+
+s1_dra = lm(audience_score ~ DramaOnly, data=movies1)
+summary(s1_dra) $ adj.r.squared
+
+s1_com = lm(audience_score ~ ComedyOnly, data=movies1)
+summary(s1_com) $ adj.r.squared
+
+s1_act = lm(audience_score ~ ActionOnly, data=movies1)
+summary(s1_act) $ adj.r.squared
+
+
+s1_mys = lm(audience_score ~ MysteryOnly, data=movies1)
+summary(s1_mys) $ adj.r.squared
+
+
+s1_yr = lm(audience_score ~ yr, data=movies1)
+summary(s1_yr) $ adj.r.squared
+
+
+s1_hg = lm(audience_score ~ hgrated, data=movies1)
+summary(s1_hg) $ adj.r.squared
+
+
+s1_star = lm(audience_score ~ stars, data=movies1)
+summary(s1_star) $ adj.r.squared
+
+
+s1_bdra = lm(audience_score ~ bestdrama, data=movies1)
+summary(s1_bdra) $ adj.r.squared
+
+
+```
+**The highest adjusted R square in Step 1 is 0.7199081 and comes from imdb_rating.**
+
+
+*Step 2:
+
+```{r step2}
+
+s2_rt = lm(audience_score ~ imdb_rating + runtime, data=movies1)
+summary(s2_rt) $ adj.r.squared
+
+s2_mr = lm(audience_score ~ imdb_rating + mpaa_rating, data=movies1)
+summary(s2_mr) $ adj.r.squared
+
+s2_in = lm(audience_score ~ imdb_rating + imdb_num_votes, data=movies1)
+summary(s2_in) $ adj.r.squared
+
+
+s2_cs = lm(audience_score ~ imdb_rating + critics_score, data=movies1)
+summary(s2_cs) $ adj.r.squared
+
+
+s2_pn = lm(audience_score ~ imdb_rating + best_pic_nom, data=movies1)
+summary(s2_pn) $ adj.r.squared
+
+
+s2_bp = lm(audience_score ~ imdb_rating + best_pic_win, data=movies1)
+summary(s2_bp) $ adj.r.squared
+
+
+s2_bam = lm(audience_score ~ imdb_rating + best_actor_win, data=movies1)
+summary(s2_bam) $ adj.r.squared
+
+
+s2_baf = lm(audience_score ~ imdb_rating + best_actress_win, data=movies1)
+summary(s2_baf) $ adj.r.squared
+
+
+s2_bd = lm(audience_score ~ imdb_rating + best_dir_win, data=movies1)
+summary(s2_bd) $ adj.r.squared
+
+
+s2_top = lm(audience_score ~ imdb_rating + top200_box, data=movies1)
+summary(s2_top) $ adj.r.squared
+
+
+s2_dra = lm(audience_score ~ imdb_rating + DramaOnly, data=movies1)
+summary(s2_dra) $ adj.r.squared
+
+s2_com = lm(audience_score ~ imdb_rating + ComedyOnly, data=movies1)
+summary(s2_com) $ adj.r.squared
+
+s2_act = lm(audience_score ~ imdb_rating + ActionOnly, data=movies1)
+summary(s2_act) $ adj.r.squared
+
+
+s2_mys = lm(audience_score ~imdb_rating +  MysteryOnly, data=movies1)
+summary(s2_mys) $ adj.r.squared
+
+
+s2_yr = lm(audience_score ~ imdb_rating + yr, data=movies1)
+summary(s2_yr) $ adj.r.squared
+
+
+s2_hg = lm(audience_score ~imdb_rating +  hgrated, data=movies1)
+summary(s2_hg) $ adj.r.squared
+
+
+s2_star = lm(audience_score ~imdb_rating +  stars, data=movies1)
+summary(s2_star) $ adj.r.squared
+
+
+s2_bdra = lm(audience_score ~ imdb_rating + bestdrama, data=movies1)
+summary(s2_bdra) $ adj.r.squared
+
+
+```
+
+**In Step 2, the highest adjusted R square 0.7296024 comes from  imdb_rating +  MysteryOnly.**
+
+
+*Step 3:
+```{r step3}
+
+s3_rt = lm(audience_score ~ imdb_rating + MysteryOnly + runtime , data=movies1)
+summary(s3_rt) $ adj.r.squared
+
+s3_mr = lm(audience_score ~ imdb_rating + MysteryOnly + mpaa_rating, data=movies1)
+summary(s3_mr) $ adj.r.squared
+
+s3_in = lm(audience_score ~ imdb_rating + MysteryOnly + imdb_num_votes, data=movies1)
+summary(s3_in) $ adj.r.squared
+
+
+s3_cs = lm(audience_score ~ imdb_rating + MysteryOnly + critics_score, data=movies1)
+summary(s3_cs) $ adj.r.squared
+
+
+s3_pn = lm(audience_score ~ imdb_rating + MysteryOnly + best_pic_nom, data=movies1)
+summary(s3_pn) $ adj.r.squared
+
+
+s3_bp = lm(audience_score ~ imdb_rating + MysteryOnly + best_pic_win, data=movies1)
+summary(s3_bp) $ adj.r.squared
+
+
+s3_bam = lm(audience_score ~ imdb_rating + MysteryOnly + best_actor_win, data=movies1)
+summary(s3_bam) $ adj.r.squared
+
+
+s3_baf = lm(audience_score ~ imdb_rating + MysteryOnly + best_actress_win, data=movies1)
+summary(s3_baf) $ adj.r.squared
+
+
+s3_bd = lm(audience_score ~ imdb_rating + MysteryOnly + best_dir_win, data=movies1)
+summary(s3_bd) $ adj.r.squared
+
+
+s3_top = lm(audience_score ~ imdb_rating + MysteryOnly + top200_box, data=movies1)
+summary(s3_top) $ adj.r.squared
+
+
+s3_dra = lm(audience_score ~ imdb_rating + MysteryOnly + DramaOnly, data=movies1)
+summary(s3_dra) $ adj.r.squared
+
+s3_com = lm(audience_score ~ imdb_rating + MysteryOnly + ComedyOnly, data=movies1)
+summary(s3_com) $ adj.r.squared
+
+s3_act = lm(audience_score ~ imdb_rating + MysteryOnly + ActionOnly, data=movies1)
+summary(s3_act) $ adj.r.squared
+
+s3_yr = lm(audience_score ~ imdb_rating + MysteryOnly + yr, data=movies1)
+summary(s3_yr) $ adj.r.squared
+
+
+s3_hg = lm(audience_score ~imdb_rating +  MysteryOnly + hgrated, data=movies1)
+summary(s3_hg) $ adj.r.squared
+
+
+s3_star = lm(audience_score ~imdb_rating + MysteryOnly + stars, data=movies1)
+summary(s3_star) $ adj.r.squared
+
+
+s3_bdra = lm(audience_score ~ imdb_rating + MysteryOnly + bestdrama, data=movies1)
+summary(s3_bdra) $ adj.r.squared
+
+
+```
+
+**In Step 3, the highest Adjusted R Square is 0.7352151 from imdb_rating +  MysteryOnly + hgrated.**
+
+
+*Step 4:
+```{r step4}
+s4_rt = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + runtime , data=movies1)
+summary(s4_rt) $ adj.r.squared
+
+s4_mr = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + mpaa_rating, data=movies1)
+summary(s4_mr) $ adj.r.squared
+
+s4_in = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated +  imdb_num_votes, data=movies1)
+summary(s4_in) $ adj.r.squared
+
+
+s4_cs = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + critics_score, data=movies1)
+summary(s4_cs) $ adj.r.squared
+
+
+s4_pn = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + best_pic_nom, data=movies1)
+summary(s4_pn) $ adj.r.squared
+
+
+s4_bp = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + best_pic_win, data=movies1)
+summary(s4_bp) $ adj.r.squared
+
+
+s4_bam = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + best_actor_win, data=movies1)
+summary(s4_bam) $ adj.r.squared
+
+
+s4_baf = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + best_actress_win, data=movies1)
+summary(s4_baf) $ adj.r.squared
+
+
+s4_bd = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + best_dir_win, data=movies1)
+summary(s4_bd) $ adj.r.squared
+
+
+s4_top = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + top200_box, data=movies1)
+summary(s4_top) $ adj.r.squared
+
+
+s4_dra = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + DramaOnly, data=movies1)
+summary(s4_dra) $ adj.r.squared
+
+s4_com = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + ComedyOnly, data=movies1)
+summary(s4_com) $ adj.r.squared
+
+s4_act = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + ActionOnly, data=movies1)
+summary(s4_act) $ adj.r.squared
+
+s4_yr = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr, data=movies1)
+summary(s4_yr) $ adj.r.squared
+
+s4_star = lm(audience_score ~imdb_rating + MysteryOnly + hgrated + stars, data=movies1)
+summary(s4_star) $ adj.r.squared
+
+
+s4_bdra = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + bestdrama, data=movies1)
+summary(s4_bdra) $ adj.r.squared
+
+```
+
+**In Step 4, the highest Adjusted R square is 0.7377185 from audience_score ~ imdb_rating + MysteryOnly + hgrated + yr.  The increase is not that much already.**
+
+*Step 5:
+
+```{r step5}
+
+s5_rt = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated  + yr + runtime , data=movies1)
+summary(s5_rt) $ adj.r.squared
+
+s5_mr = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + mpaa_rating, data=movies1)
+summary(s5_mr) $ adj.r.squared
+
+s5_in = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated +  yr + imdb_num_votes, data=movies1)
+summary(s5_in) $ adj.r.squared
+
+
+s5_cs = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score, data=movies1)
+summary(s5_cs) $ adj.r.squared
+
+
+s5_pn = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + best_pic_nom, data=movies1)
+summary(s5_pn) $ adj.r.squared
+
+
+s5_bp = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + best_pic_win, data=movies1)
+summary(s5_bp) $ adj.r.squared
+
+
+s5_bam = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + best_actor_win, data=movies1)
+summary(s5_bam) $ adj.r.squared
+
+
+s5_baf = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + best_actress_win, data=movies1)
+summary(s5_baf) $ adj.r.squared
+
+
+s5_bd = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + best_dir_win, data=movies1)
+summary(s5_bd) $ adj.r.squared
+
+
+s5_top = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + top200_box, data=movies1)
+summary(s5_top) $ adj.r.squared
+
+
+s5_dra = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + DramaOnly, data=movies1)
+summary(s5_dra) $ adj.r.squared
+
+s5_com = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + ComedyOnly, data=movies1)
+summary(s5_com) $ adj.r.squared
+
+s5_act = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + ActionOnly, data=movies1)
+summary(s5_act) $ adj.r.squared
+
+s5_star = lm(audience_score ~imdb_rating + MysteryOnly + hgrated + yr + stars, data=movies1)
+summary(s5_star) $ adj.r.squared
+
+
+s5_bdra = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + bestdrama, data=movies1)
+summary(s5_bdra) $ adj.r.squared
+
+```
+
+**In Step 5, the highest adjusted R square is 0.7403213 from imdb_rating + MysteryOnly + hgrated + yr + critics_score.**
+
+
+*Step 6:
+
+```{r step6}
+
+s6_rt = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated  + yr + critics_score + runtime , data=movies1)
+summary(s6_rt) $ adj.r.squared
+
+s6_mr = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + mpaa_rating, data=movies1)
+summary(s6_mr) $ adj.r.squared
+
+s6_in = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated +  yr + critics_score + imdb_num_votes, data=movies1)
+summary(s6_in) $ adj.r.squared
+
+s6_pn = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + best_pic_nom, data=movies1)
+summary(s6_pn) $ adj.r.squared
+
+
+s6_bp = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + best_pic_win, data=movies1)
+summary(s6_bp) $ adj.r.squared
+
+
+s6_bam = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + best_actor_win, data=movies1)
+summary(s6_bam) $ adj.r.squared
+
+
+s6_baf = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + best_actress_win, data=movies1)
+summary(s6_baf) $ adj.r.squared
+
+
+s6_bd = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + best_dir_win, data=movies1)
+summary(s6_bd) $ adj.r.squared
+
+
+s6_top = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + top200_box, data=movies1)
+summary(s6_top) $ adj.r.squared
+
+
+s6_dra = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + DramaOnly, data=movies1)
+summary(s6_dra) $ adj.r.squared
+
+s6_com = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + ComedyOnly, data=movies1)
+summary(s6_com) $ adj.r.squared
+
+s6_act = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + ActionOnly, data=movies1)
+summary(s6_act) $ adj.r.squared
+
+s6_star = lm(audience_score ~imdb_rating + MysteryOnly + hgrated + yr + critics_score + stars, data=movies1)
+summary(s6_star) $ adj.r.squared
+
+
+s6_bdra = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + bestdrama, data=movies1)
+summary(s6_bdra) $ adj.r.squared
+
+```
+**In Step 6, the highest adjusted R square is 0.7415692 from iimdb_rating + MysteryOnly + hgrated  + yr + critics_score + runtime.**
+
+
+*Step 7:
+
+```{r step7}
+
+s7_mr = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + mpaa_rating, data=movies1)
+summary(s7_mr) $ adj.r.squared
+
+s7_in = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated +  yr + critics_score + runtime + imdb_num_votes, data=movies1)
+summary(s7_in) $ adj.r.squared
+
+s7_pn = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime  + best_pic_nom, data=movies1)
+summary(s7_pn) $ adj.r.squared
+
+
+s7_bp = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + best_pic_win, data=movies1)
+summary(s7_bp) $ adj.r.squared
+
+
+s7_bam = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + best_actor_win, data=movies1)
+summary(s7_bam) $ adj.r.squared
+
+
+s7_baf = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + best_actress_win, data=movies1)
+summary(s7_baf) $ adj.r.squared
+
+
+s7_bd = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + best_dir_win, data=movies1)
+summary(s7_bd) $ adj.r.squared
+
+
+s7_top = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + top200_box, data=movies1)
+summary(s7_top) $ adj.r.squared
+
+
+s7_dra = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + DramaOnly, data=movies1)
+summary(s7_dra) $ adj.r.squared
+
+s7_com = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + ComedyOnly, data=movies1)
+summary(s7_com) $ adj.r.squared
+
+s7_act = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + ActionOnly, data=movies1)
+summary(s7_act) $ adj.r.squared
+
+s7_star = lm(audience_score ~imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + stars, data=movies1)
+summary(s7_star) $ adj.r.squared
+
+
+s7_bdra = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + bestdrama, data=movies1)
+summary(s7_bdra) $ adj.r.squared
+
+
+```
+
+**In Step 7, the highest adjusted R square is 0.741892 from imdb_rating + MysteryOnly + hgrated +  yr + critics_score + runtime + imdb_num_votes.**
+
+
+*Step 8:
+
+```{r step8}
+
+s8_mr = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + imdb_num_votes + mpaa_rating, data=movies1)
+summary(s8_mr) $ adj.r.squared
+
+s8_pn = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + imdb_num_votes + best_pic_nom, data=movies1)
+summary(s8_pn) $ adj.r.squared
+
+
+s8_bp = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + imdb_num_votes + best_pic_win, data=movies1)
+summary(s8_bp) $ adj.r.squared
+
+
+s8_bam = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + imdb_num_votes + best_actor_win, data=movies1)
+summary(s8_bam) $ adj.r.squared
+
+
+s8_baf = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + imdb_num_votes + best_actress_win, data=movies1)
+summary(s8_baf) $ adj.r.squared
+
+
+s8_bd = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + imdb_num_votes + best_dir_win, data=movies1)
+summary(s8_bd) $ adj.r.squared
+
+
+s8_top = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + imdb_num_votes + top200_box, data=movies1)
+summary(s8_top) $ adj.r.squared
+
+
+s8_dra = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + imdb_num_votes + DramaOnly, data=movies1)
+summary(s8_dra) $ adj.r.squared
+
+s8_com = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + imdb_num_votes + ComedyOnly, data=movies1)
+summary(s8_com) $ adj.r.squared
+
+s8_act = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + imdb_num_votes + ActionOnly, data=movies1)
+summary(s8_act) $ adj.r.squared
+
+s8_star = lm(audience_score ~imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + imdb_num_votes + stars, data=movies1)
+summary(s8_star) $ adj.r.squared
+
+
+s8_bdra = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + imdb_num_votes + bestdrama, data=movies1)
+summary(s8_bdra) $ adj.r.squared
+
+
+```
+
+**In Step 8, the highest adjusted R square is 0.742112 from imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + imdb_num_votes + mpaa_rating.**
+
+
+*Step 9:
+
+```{r}
+
+s9_pn = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + imdb_num_votes + mpaa_rating + best_pic_nom, data=movies1)
+summary(s9_pn) $ adj.r.squared
+
+
+s9_bp = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + imdb_num_votes + mpaa_rating + best_pic_win, data=movies1)
+summary(s9_bp) $ adj.r.squared
+
+
+s9_bam = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + imdb_num_votes + mpaa_rating + best_actor_win, data=movies1)
+summary(s9_bam) $ adj.r.squared
+
+
+s9_baf = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + imdb_num_votes + mpaa_rating + best_actress_win, data=movies1)
+summary(s9_baf) $ adj.r.squared
+
+
+s9_bd = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + imdb_num_votes + mpaa_rating + best_dir_win, data=movies1)
+summary(s9_bd) $ adj.r.squared
+
+
+s9_top = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + imdb_num_votes + mpaa_rating + top200_box, data=movies1)
+summary(s9_top) $ adj.r.squared
+
+
+s9_dra = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + imdb_num_votes + mpaa_rating + DramaOnly, data=movies1)
+summary(s9_dra) $ adj.r.squared
+
+s9_com = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + imdb_num_votes + mpaa_rating + ComedyOnly, data=movies1)
+summary(s9_com) $ adj.r.squared
+
+s9_act = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + imdb_num_votes + mpaa_rating + ActionOnly, data=movies1)
+summary(s9_act) $ adj.r.squared
+
+s9_star = lm(audience_score ~imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + imdb_num_votes  + mpaa_rating + stars, data=movies1)
+summary(s9_star) $ adj.r.squared
+
+
+s9_bdra = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + imdb_num_votes + mpaa_rating + bestdrama, data=movies1)
+summary(s9_bdra) $ adj.r.squared
+
+```
+
+**In Step 9, the highest adjusted R square is 0.7422632 from imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + imdb_num_votes + mpaa_rating + ComedyOnly.  So far, the adjusted R square is still improving.**
+ 
+ 
+ *Step 10:
+ 
+```{r}
+s10_pn = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + imdb_num_votes + mpaa_rating + best_pic_nom, data=movies1)
+summary(s10_pn) $ adj.r.squared
+
+
+s10_bp = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + imdb_num_votes + mpaa_rating + best_pic_win, data=movies1)
+summary(s10_bp) $ adj.r.squared
+
+
+s10_bam = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + imdb_num_votes + mpaa_rating + best_actor_win, data=movies1)
+summary(s10_bam) $ adj.r.squared
+
+
+s10_baf = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + imdb_num_votes + mpaa_rating + best_actress_win, data=movies1)
+summary(s10_baf) $ adj.r.squared
+
+
+s10_bd = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + imdb_num_votes + mpaa_rating + best_dir_win, data=movies1)
+summary(s10_bd) $ adj.r.squared
+
+
+s10_top = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + imdb_num_votes + mpaa_rating + top200_box, data=movies1)
+summary(s10_top) $ adj.r.squared
+
+
+s10_dra = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + imdb_num_votes + mpaa_rating + DramaOnly, data=movies1)
+summary(s10_dra) $ adj.r.squared
+
+s10_act = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + imdb_num_votes + mpaa_rating + ActionOnly, data=movies1)
+summary(s10_act) $ adj.r.squared
+
+s10_star = lm(audience_score ~imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + imdb_num_votes  + mpaa_rating + stars, data=movies1)
+summary(s10_star) $ adj.r.squared
+
+
+s10_bdra = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + imdb_num_votes + mpaa_rating + bestdrama, data=movies1)
+summary(s10_bdra) $ adj.r.squared
+
+
+```
+ 
+**In Step 10, the highest adjusted R square is 0.7422524 from imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + imdb_num_votes + mpaa_rating + best_actress_win.**
+
+
+
+#### The final model
+After ten steps, we finally get the parsimonious model.  When we started Step 10, we had 10 variables left.  In Step 10, none of these remaining variables gave a higher adjusted R square than the highest adjusted R square in Step 9. In other words, the inclusion of these remaining 10 variables will not improve the model, which can be shown from the Adjusted R square.  The highest adjusted R square in Step 10 was 0.7422524, which was smaller than the one in Step 9 (0.7422632). Hence, our stepwise decision will stop here.  
+
+The model in **Step 9** will be our final model, which includes 9 explanatory variables as follows:
+
+imdb_rating,  MysteryOnly,  hgrated,  yr,  critics_score,  runtime,  imdb_num_votes,  mpaa_rating, ComedyOnly 
+
+```{r finalmodel}
+
+FM = lm(audience_score ~ imdb_rating + MysteryOnly + hgrated + yr + critics_score + runtime + imdb_num_votes + mpaa_rating + ComedyOnly, data = movies1)
+  
+summary(FM)
+
+```
+
+  
+
+**Equation:**
+
+audience_score = -28.170 + 14.470(imdb_rating) -5.062(MysteryOnly) + 3.738(hgrated) + 0.353(yr1980s) + 1.356(yr1990s) + 1.315(yr2000s) -3.340(yr2010s) + 0.061(critics_score) -0.048(runtime) + 0.000005739(imdb_num_votes) -5.744(mpaa_ratingNC-17)-1.495(mpaa_ratingPG) -3.256(mpaa_ratingPG-13) -3.490(mpaa_ratingR) -0.146(mpaa_ratingUnrated) + 1.473(ComedyOnly)
+  
+
+**Coefficient Interpretation:**
+
+*  imdb_rating – All else held constant, for each one unit ( 1 points ) increase in imdb_rating, the model predicts audience_score will increase by 14.470 points.
+
+*  MysteryOnly – All else held constant, the model predicts that mystery movies will be rated 5.062 lower than non-mystery movies in the audience_score, on average.  
+
+*  Hgrated – All else held constant, the model predicts that  hgrated movies will be rated 3.738 higher than non-hgrated movies in the audience_score, on average.  
+
+*  Each of the following levels “yr1980s” to “yr2010s” is one of the 5 levels of the categorical variable “yr”.  The reference level is “yr1970s”.
+
+     + yr1980s – All else held constant, the model predicts that  movies from the “yr1980s” will be rated 0.353 higher than movies from the “yr1970s” in the audience_score, on average.    
+     + yr1990s – All else held constant, the model predicts that  movies from the “yr1990s” will be rated 1.356 higher than movies from the “yr1970s” in the audience_score, on average.
+     + yr2000s – All else held constant, the model predicts that  movies from the “yr2000s” will be rated 1.315 higher than movies from the “yr1970s” in the audience_score, on average.
+     + yr2010s – All else held constant, the model predicts that  movies from the “yr2010s” will be rated 3.340 lower than movies from the “yr1970s” in the audience_score, on average.
+     
+
+*  critics_score – All else held constant, for each one unit ( 1 points ) increase in critics_score, the model predicts audience_score will increase by 0.061 points.
+
+*  runtime – All else held constant, for each one unit ( 1 minute ) increase in runtime, the model predicts audience_score will decrease by 0.048 points.
+
+*  imdb_num_votes – All else held constant, for each one unit (number of vote ) increase in imdb_num_votes, the model predicts audience_score will increase by a tiny 0.000005739 points.
+
+*  Each of the following levels “mpaa_ratingPG” to “mpaa_ratingUnrated” is one of the 6 levels of the categorical variable “mpaa_rating”.  The reference level is “mpaa_ratingG”. 
+
+     + mpaa_ratingPG - All else held constant, the model predicts that  a PG move will be rated 1.495 lower than a G movie in the audience_score, on average.    
+     + mpaa_ratingPG-13 - All else held constant, the model predicts that  a PG-13 move will be rated 3.256 lower than a G movie in the audience_score, on average.     
+     + mpaa_ratingNC-17 - All else held constant, the model predicts that  a NC-17 move will be rated 5.744 lower than a G movie in the audience_score, on average.      
+     + mpaa_ratingR - All else held constant, the model predicts that  a R move will be rated 3.490 lower than a G movie in the audience_score, on average.     
+     + mpaa_ratingUnrated - All else held constant, the model predicts that  a Unrated move will be rated 0.146 lower than a G movie in the audience_score, on average.
+     
+
+*  ComedyOnly – All else held constant, the model predicts that comedy movies will be rated 1.473 higher than non-comedy movies in the audience_score, on average.  
+
+
+**Model Diagnostics:**
+1.  Linear relationships between numerical x and y
+
+```{r linear}
+plot(FM$residuals ~ movies1$imdb_rating)
+abline (h=0, col = "red")
+
+plot(FM$residuals ~ movies1$critics_score)
+abline (h=0, col = "red")
+
+```
+
+The residuals of imdb_rating and critics_score are more or less randomly scattered around 0 line. So both variables have a linear relationship with audience_score.
+  
+2.  Near normal residuals with mean 0
+
+```{r normality}
+
+hist(FM$residuals)
+
+qqnorm(FM$residuals)
+
+qqline(FM$residuals)
+
+```
+
+
+The histogram shows a nearly norm distribution of residuals of the model.
+  
+Meanwhile, the majority of residuals lie perfectly along the straight line.  That said, we do see some points are far away from the line at the upper right corner, which might suggest right skewed and heavy tail. 
+
+3.  Constant variability of residuals
+
+```{r constantvar}
+
+plot(FM$residuals ~ FM$fitted.values)
+abline(h=0, col="Red")
+
+
+plot(abs(FM$residuals) ~ FM$fitted.values)
+
+```
+
+From the absolute value of residuals vs. predicted plot, we see an unusal pattern.  If we look at the residual distribution of the fitted values, we found more residuals in the middle (fitted value = 40) and fewer and fewer on the right (from fitted value of 60 to 100).  The distribution is like a fan or right angle triangle. In other words, the model doesn't seem to have constant variability of residuals.
+
+
+4. Independent residuals
+
+```{r indptResid}
+
+plot(FM$residuals)
+abline(h=0, col="Red")
+
+```
+
+Residuals are clearly randomly scattered along the 0.  Hence, it is safe to say that the model meets the independent residuals condition.
+
+
+
+
+  
+  
+
+* * *
+
+## Part 5: Prediction
+
+**Moana**  
+
+*  The movie I would like to predict is Moana, a Walt Disney Pictures released in Nov 2016.
+
+*  Information about the movie comes from two sources:  
+
+     +  IMDB: https://www.imdb.com/search/title?year=2016,2016&title_type=feature&sort=moviemeter,asc
+
+     +  Rotten Tomatoes:  https://www.rottentomatoes.com/m/moana_2016/
+
+```{r prediction}
+
+moana = data.frame(imdb_rating = 7.6 , MysteryOnly = 0, hgrated = 1, yr= "2010s", critics_score = 96, runtime=107, imdb_num_votes=187387, mpaa_rating = "PG", ComedyOnly=0)
+
+predict(FM, moana)
+
+```
+
+The model predict the audience_score of the movie Moana will be 82.45297.
+
+
+```{r pred-interval}
+
+predict(FM, moana, interval = "prediction", level=0.95)
+
+```
+
+With 95% confidence, the model predicts the movie Moana is expected to have an audence_score between 62.3 and 102.6.
+
+
+
+* * *
+
+## Part 6: Conclusion
+
+1.  We found that the following variables are related to the popularity of a movie (the operational definition of it is audience_score):
+     +  Critic ratings seem to be matter.  For instance,  
+          +  Imdb_rating, critics_score, hgrated are all positvely related to audience_score.
+     +  Comedy will increase the likelyhood of popularity but not Mystery movies.
+          +  ComedyOnly is positively related to audience_score but MysteryOnly is negatively related.
+     +  Movies from the 1980s to 2000s have a positive relationship with audience_score.   By contrast, , movies from the 2010s are negatively related to audience_score. 
+     +  The length of a movie seems to have an impact too.  Long movies seem to have lower audience_score on averge, which is shown from the negative relationship between “runtime” and audience_score.
+     +  All MPAA Rating with the exception of G are negatively related to audience_score.
+     +  The number of  votes in IMDB has a tiny positive relationship with audience_score.
+2.  Shortcomes
+     +  We do not have an appropriate numerical variable to represent popularity in the data set. 
+     +  Collinearity between imdb_rating and critics_score is likely problematic.
+     +  Nor does the model meet the constant variability of residuals condition.
+     +  Number of cases in the levels of several variables are small and not evenly distributed.  For instance, there are only 7 best picture win, 15 movies among the five hundreds movies in the data set are Top 200 box office movies, only 2 NC-17 MPAA Rating, etc.
+  
+3.  Future research
+     +  We need a better variable to represent popularity of a movie
+     +  Might choose either imdb_rating or critics_score, but not both.
+     +  Might try to increase the number of movies in each level for several variables.
+
+
+
+
+
+
+
+
